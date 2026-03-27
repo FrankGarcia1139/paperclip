@@ -281,4 +281,50 @@ describe("issueService.list participantAgentId", () => {
 
     expect(result.map((issue) => issue.id)).toEqual([matchedIssueId]);
   });
+
+  it("lists incremental comments after an anchor without throwing on timestamp cursors", async () => {
+    const companyId = randomUUID();
+    const issueId = randomUUID();
+    const firstCommentId = randomUUID();
+    const secondCommentId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Incremental comment cursor",
+      status: "todo",
+      priority: "medium",
+    });
+
+    await db.insert(issueComments).values([
+      {
+        id: firstCommentId,
+        companyId,
+        issueId,
+        body: "First comment",
+        createdAt: new Date("2026-03-25T18:00:00.000Z"),
+      },
+      {
+        id: secondCommentId,
+        companyId,
+        issueId,
+        body: "Second comment",
+        createdAt: new Date("2026-03-25T18:05:00.000Z"),
+      },
+    ]);
+
+    const result = await svc.listComments(issueId, {
+      afterCommentId: firstCommentId,
+      order: "asc",
+    });
+
+    expect(result.map((comment) => comment.id)).toEqual([secondCommentId]);
+  });
 });
