@@ -13,6 +13,7 @@ import {
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
   updateIssueSchema,
+  isUuidLike,
 } from "@paperclipai/shared";
 import type { StorageService } from "../storage/types.js";
 import { validate } from "../middleware/validate.js";
@@ -38,6 +39,13 @@ import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
+const ISSUE_LIST_UUID_FILTERS = [
+  "assigneeAgentId",
+  "participantAgentId",
+  "projectId",
+  "parentId",
+  "labelId",
+] as const;
 
 export function issueRoutes(db: Db, storage: StorageService) {
   const router = Router();
@@ -228,6 +236,17 @@ export function issueRoutes(db: Db, storage: StorageService) {
   router.get("/companies/:companyId/issues", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
+
+    for (const filterName of ISSUE_LIST_UUID_FILTERS) {
+      const rawValue = req.query[filterName];
+      if (typeof rawValue === "string" && rawValue.trim().length > 0 && !isUuidLike(rawValue)) {
+        res.status(400).json({
+          error: `Invalid ${filterName}. Expected UUID.`,
+        });
+        return;
+      }
+    }
+
     const assigneeUserFilterRaw = req.query.assigneeUserId as string | undefined;
     const touchedByUserFilterRaw = req.query.touchedByUserId as string | undefined;
     const unreadForUserFilterRaw = req.query.unreadForUserId as string | undefined;
@@ -304,6 +323,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
   router.delete("/labels/:labelId", async (req, res) => {
     const labelId = req.params.labelId as string;
+    if (!isUuidLike(labelId)) {
+      res.status(400).json({ error: "Invalid labelId. Expected UUID." });
+      return;
+    }
     const existing = await svc.getLabelById(labelId);
     if (!existing) {
       res.status(404).json({ error: "Label not found" });
@@ -377,6 +400,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
       typeof req.query.wakeCommentId === "string" && req.query.wakeCommentId.trim().length > 0
         ? req.query.wakeCommentId.trim()
         : null;
+    if (wakeCommentId && !isUuidLike(wakeCommentId)) {
+      res.status(400).json({ error: "Invalid wakeCommentId. Expected UUID." });
+      return;
+    }
 
     const [{ project, goal }, ancestors, commentCursor, wakeComment] = await Promise.all([
       resolveIssueProjectAndGoal(issue),
@@ -617,6 +644,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
   router.patch("/work-products/:id", validate(updateIssueWorkProductSchema), async (req, res) => {
     const id = req.params.id as string;
+    if (!isUuidLike(id)) {
+      res.status(400).json({ error: "Invalid workProductId. Expected UUID." });
+      return;
+    }
     const existing = await workProductsSvc.getById(id);
     if (!existing) {
       res.status(404).json({ error: "Work product not found" });
@@ -645,6 +676,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
   router.delete("/work-products/:id", async (req, res) => {
     const id = req.params.id as string;
+    if (!isUuidLike(id)) {
+      res.status(400).json({ error: "Invalid workProductId. Expected UUID." });
+      return;
+    }
     const existing = await workProductsSvc.getById(id);
     if (!existing) {
       res.status(404).json({ error: "Work product not found" });
@@ -752,6 +787,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const issue = await svc.getById(id);
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    if (!isUuidLike(approvalId)) {
+      res.status(400).json({ error: "Invalid approvalId. Expected UUID." });
       return;
     }
     if (!(await assertCanManageIssueApprovalLinks(req, res, issue.companyId))) return;
@@ -1182,6 +1221,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
         : typeof req.query.afterCommentId === "string" && req.query.afterCommentId.trim().length > 0
           ? req.query.afterCommentId.trim()
           : null;
+    if (afterCommentId && !isUuidLike(afterCommentId)) {
+      res.status(400).json({ error: "Invalid afterCommentId. Expected UUID." });
+      return;
+    }
     const order =
       typeof req.query.order === "string" && req.query.order.trim().toLowerCase() === "asc"
         ? "asc"
@@ -1205,6 +1248,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
   router.get("/issues/:id/comments/:commentId", async (req, res) => {
     const id = req.params.id as string;
     const commentId = req.params.commentId as string;
+    if (!isUuidLike(commentId)) {
+      res.status(400).json({ error: "Invalid commentId. Expected UUID." });
+      return;
+    }
     const issue = await svc.getById(id);
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
@@ -1542,6 +1589,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
   router.get("/attachments/:attachmentId/content", async (req, res, next) => {
     const attachmentId = req.params.attachmentId as string;
+    if (!isUuidLike(attachmentId)) {
+      res.status(400).json({ error: "Invalid attachmentId. Expected UUID." });
+      return;
+    }
     const attachment = await svc.getAttachmentById(attachmentId);
     if (!attachment) {
       res.status(404).json({ error: "Attachment not found" });
@@ -1564,6 +1615,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
   router.delete("/attachments/:attachmentId", async (req, res) => {
     const attachmentId = req.params.attachmentId as string;
+    if (!isUuidLike(attachmentId)) {
+      res.status(400).json({ error: "Invalid attachmentId. Expected UUID." });
+      return;
+    }
     const attachment = await svc.getAttachmentById(attachmentId);
     if (!attachment) {
       res.status(404).json({ error: "Attachment not found" });
