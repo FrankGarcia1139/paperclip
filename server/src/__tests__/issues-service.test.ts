@@ -314,3 +314,132 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     ]));
   });
 });
+
+// Regression test for POLAAA-36: Date binding TypeError in incremental comment cursor
+describeEmbeddedPostgres("issueService.listComments incremental cursor (POLAAA-36)", () => {
+  let db!: ReturnType<typeof createDb>;
+  let svc!: ReturnType<typeof issueService>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-list-comments-");
+    db = createDb(tempDb.connectionString);
+    svc = issueService(db);
+  }, 20_000);
+
+  afterEach(async () => {
+    await db.delete(issueComments);
+    await db.delete(issueInboxArchives);
+    await db.delete(activityLog);
+    await db.delete(issues);
+    await db.delete(agents);
+    await db.delete(companies);
+  });
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  it("returns only comments after the cursor without TypeError (asc)", async () => {
+    const companyId = randomUUID();
+    const issueId = randomUUID();
+    const firstCommentId = randomUUID();
+    const secondCommentId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Test Co",
+      issuePrefix: "TC",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Test issue",
+      status: "todo",
+      priority: "medium",
+    });
+
+    await db.insert(issueComments).values([
+      {
+        id: firstCommentId,
+        companyId,
+        issueId,
+        body: "First comment",
+        createdAt: new Date("2026-03-25T10:00:00.000Z"),
+        updatedAt: new Date("2026-03-25T10:00:00.000Z"),
+      },
+      {
+        id: secondCommentId,
+        companyId,
+        issueId,
+        body: "Second comment",
+        createdAt: new Date("2026-03-25T11:00:00.000Z"),
+        updatedAt: new Date("2026-03-25T11:00:00.000Z"),
+      },
+    ]);
+
+    // This call previously threw TypeError: The "string" argument must be of type string or Buffer.
+    // Received an instance of Date — because anchor.createdAt (a Date) was bound raw into sql``.
+    const result = await svc.listComments(issueId, {
+      afterCommentId: firstCommentId,
+      order: "asc",
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe(secondCommentId);
+    expect(result[0].body).toBe("Second comment");
+  });
+
+  it("returns only comments before the cursor without TypeError (desc)", async () => {
+    const companyId = randomUUID();
+    const issueId = randomUUID();
+    const firstCommentId = randomUUID();
+    const secondCommentId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Test Co 2",
+      issuePrefix: "TC2",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Test issue 2",
+      status: "todo",
+      priority: "medium",
+    });
+
+    await db.insert(issueComments).values([
+      {
+        id: firstCommentId,
+        companyId,
+        issueId,
+        body: "Older comment",
+        createdAt: new Date("2026-03-25T10:00:00.000Z"),
+        updatedAt: new Date("2026-03-25T10:00:00.000Z"),
+      },
+      {
+        id: secondCommentId,
+        companyId,
+        issueId,
+        body: "Newer comment",
+        createdAt: new Date("2026-03-25T11:00:00.000Z"),
+        updatedAt: new Date("2026-03-25T11:00:00.000Z"),
+      },
+    ]);
+
+    // desc order: cursor is the second (newer) comment; should return only the first (older)
+    const result = await svc.listComments(issueId, {
+      afterCommentId: secondCommentId,
+      order: "desc",
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe(firstCommentId);
+    expect(result[0].body).toBe("Older comment");
+  });
+});
