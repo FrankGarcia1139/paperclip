@@ -10,6 +10,7 @@ import {
   createIssueSchema,
   linkIssueApprovalSchema,
   issueDocumentKeySchema,
+  isUuidLike,
   updateIssueWorkProductSchema,
   upsertIssueDocumentSchema,
   updateIssueSchema,
@@ -264,6 +265,24 @@ export function issueRoutes(db: Db, storage: StorageService) {
     if (unreadForUserFilterRaw === "me" && (!unreadForUserId || req.actor.type !== "board")) {
       res.status(403).json({ error: "unreadForUserId=me requires board authentication" });
       return;
+    }
+
+    // Validate UUID-backed filter params before they reach Postgres.
+    // Short or malformed IDs (e.g. "dbc9e430", "972002ec") cause a 500
+    // "invalid input syntax for type uuid" at the DB layer — reject early.
+    const uuidParams = [
+      "assigneeAgentId",
+      "participantAgentId",
+      "projectId",
+      "parentId",
+      "labelId",
+    ] as const;
+    for (const param of uuidParams) {
+      const val = req.query[param];
+      if (val !== undefined && !isUuidLike(val as string)) {
+        res.status(400).json({ error: `Invalid UUID for filter parameter: ${param}` });
+        return;
+      }
     }
 
     const result = await svc.list(companyId, {
